@@ -2,7 +2,7 @@
 /**
  * AppName: Domain Info Lookup Tool
  * Description: PHP Script to return domain info: IP Addresses Registar, SSL Certificate, DNS Records  information from a list of domain names.
- * Version: 1.1.3
+ * Version: 1.1.4
  * Author: Jorge Pereira
  */
 
@@ -130,25 +130,47 @@ function getRegistrarInfo($domain) {
 // Function to get SSL certificate expiration
 function getSSLCertificateInfo($domain) {
     try {
+        // First verify if the domain resolves to an IP
+        $ip = gethostbyname($domain);
+        if ($ip === $domain) {
+            return "Domain does not resolve to an IP address";
+        }
+
+        // Set a timeout for the connection attempt
         $context = stream_context_create([
             "ssl" => [
                 "capture_peer_cert" => true,
                 "verify_peer" => false,
                 "verify_peer_name" => false,
+            ],
+            'socket' => [
+                'timeout' => 10 // 10 seconds timeout
             ]
         ]);
 
-        $client = stream_socket_client(
+        // Suppress warnings during the connection attempt
+        $errno = 0;
+        $errstr = '';
+        $client = @stream_socket_client(
             "ssl://$domain:443",
             $errno,
             $errstr,
-            30,
+            10,
             STREAM_CLIENT_CONNECT,
             $context
         );
 
         if (!$client) {
-            return "Unable to connect";
+            // Check specific error conditions
+            if (strpos($errstr, 'getaddrinfo') !== false) {
+                return "Unable to establish SSL connection";
+            } elseif (strpos($errstr, 'Connection refused') !== false) {
+                return "SSL connection refused";
+            } elseif (strpos($errstr, 'Connection timed out') !== false) {
+                return "Connection timed out";
+            } else {
+                return "SSL connection failed: " . $errstr;
+            }
         }
 
         $params = stream_context_get_params($client);
@@ -165,9 +187,13 @@ function getSSLCertificateInfo($domain) {
             ];
         }
         
-        return "No certificate found";
+        return "No SSL certificate found";
     } catch (Exception $e) {
-        return "Error: " . $e->getMessage();
+        return "Error checking SSL: " . $e->getMessage();
+    } finally {
+        if (isset($client) && $client) {
+            @fclose($client);
+        }
     }
 }
 
